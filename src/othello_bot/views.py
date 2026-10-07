@@ -15,7 +15,7 @@ from discord import ui
 
 from othello_bot.engine import COLUMNS, Color, square_name
 from othello_bot.game import EndReason, Game, Mode, Phase
-from othello_bot.render import board_png, replay_gif
+from othello_bot.render import ImageRequest, Images
 from othello_bot.text_board import Tiles, board_text
 
 if TYPE_CHECKING:
@@ -120,18 +120,34 @@ def _kifu(game: Game) -> str:
     return f"-# 棋譜（{len(game.moves)} 手）\n```\n{' '.join(square_name(m) for m in game.moves)}\n```"
 
 
-def _board_items(game: Game, tiles: Tiles, *, final: bool) -> tuple[list[ui.Item], list[discord.File]]:
+def _board_options(game: Game) -> dict:
     show_legal = game.phase is Phase.PLAYING and game.cpu_to_move is None
-    options = {"last_move": game.last_move, "show_legal": show_legal, "selected_col": game.selected_col}
+    return {"last_move": game.last_move, "show_legal": show_legal, "selected_col": game.selected_col}
+
+
+def _shows_replay(game: Game) -> bool:
+    return game.phase is Phase.FINISHED and bool(game.moves)
+
+
+def image_request(game: Game) -> ImageRequest | None:
+    """:func:`build` に渡す画像の指定。画像が要らなければ None。"""
+    shows_board = game.phase in (Phase.PLAYING, Phase.FINISHED) and game.mode is Mode.IMAGE
+    replay = tuple(game.moves) if _shows_replay(game) else ()
+    if not shows_board and not replay:
+        return None
+    return ImageRequest(game.board if shows_board else None, replay=replay, **_board_options(game))
+
+
+def _board_items(game: Game, tiles: Tiles, images: Images) -> tuple[list[ui.Item], list[discord.File]]:
     items: list[ui.Item] = []
     files: list[discord.File] = []
     if game.mode is Mode.TEXT:
-        items.append(ui.TextDisplay(board_text(game.board, tiles, **options)))
+        items.append(ui.TextDisplay(board_text(game.board, tiles, **_board_options(game))))
     else:
-        files.append(discord.File(io.BytesIO(board_png(game.board, **options)), filename=BOARD_FILE))
+        files.append(discord.File(io.BytesIO(images.board), filename=BOARD_FILE))
         items.append(ui.MediaGallery(discord.MediaGalleryItem(f"attachment://{BOARD_FILE}", description="盤面")))
-    if final and game.moves:
-        files.append(discord.File(io.BytesIO(replay_gif(game.moves)), filename=REPLAY_FILE))
+    if _shows_replay(game):
+        files.append(discord.File(io.BytesIO(images.replay), filename=REPLAY_FILE))
         items += [
             ui.TextDisplay("### リプレイ"),
             ui.MediaGallery(discord.MediaGalleryItem(f"attachment://{REPLAY_FILE}", description="リプレイ")),
@@ -198,8 +214,8 @@ def _game_buttons(game: Game) -> ui.ActionRow:
     return _row(*buttons)
 
 
-def build(game: Game, tiles: Tiles) -> tuple[ui.LayoutView, list[discord.File]]:
-    """対局の現在の状態からメッセージの中身を作る。"""
+def build(game: Game, tiles: Tiles, images: Images) -> tuple[ui.LayoutView, list[discord.File]]:
+    """対局の現在の状態と、:func:`image_request` に従って描いた画像からメッセージの中身を作る。"""
     items: list[ui.Item] = []
     files: list[discord.File] = []
 
@@ -209,7 +225,7 @@ def build(game: Game, tiles: Tiles) -> tuple[ui.LayoutView, list[discord.File]]:
         case Phase.CLOSED:
             items += [ui.TextDisplay(f"### オセロ\n{_closed_text(game)}")]
         case Phase.PLAYING:
-            board, files = _board_items(game, tiles, final=False)
+            board, files = _board_items(game, tiles, images)
             items += [
                 ui.TextDisplay(f"### オセロ\n{_players(game, tiles)}"),
                 ui.TextDisplay(_status(game)),
@@ -219,7 +235,7 @@ def build(game: Game, tiles: Tiles) -> tuple[ui.LayoutView, list[discord.File]]:
                 _game_buttons(game),
             ]
         case Phase.FINISHED:
-            board, files = _board_items(game, tiles, final=True)
+            board, files = _board_items(game, tiles, images)
             items += [
                 ui.TextDisplay(f"### オセロ 終局\n{_players(game, tiles)}"),
                 ui.TextDisplay(_result(game)),

@@ -4,11 +4,16 @@ from PIL import Image
 
 from othello_bot.engine import Color, parse_square
 from othello_bot.game import EndReason, Game, Mode, Seat
-from othello_bot.render import TILE_KINDS
+from othello_bot.render import TILE_KINDS, Images, render_images
 from othello_bot.text_board import Tiles, board_text
-from othello_bot.views import BOARD_FILE, REPLAY_FILE, build
+from othello_bot.views import BOARD_FILE, REPLAY_FILE, build, image_request
 
 HOST, GUEST = 1, 2
+
+
+def render(game: Game, tiles: Tiles) -> tuple[ui.LayoutView, list]:
+    request = image_request(game)
+    return build(game, tiles, render_images(request) if request else Images())
 
 
 @pytest.fixture
@@ -40,7 +45,7 @@ def test_finished_game_shows_replay(mode: Mode, reason: EndReason, tiles: Tiles)
             case EndReason.ABORTED:
                 game.abort()
 
-    view, files = build(game, tiles)
+    view, files = render(game, tiles)
     try:
         assert game.end_reason is reason
         expected_files = [REPLAY_FILE] if mode is Mode.TEXT else [BOARD_FILE, REPLAY_FILE]
@@ -69,6 +74,13 @@ def test_finished_game_shows_replay(mode: Mode, reason: EndReason, tiles: Tiles)
             file.close()
 
 
+def test_no_images_requested_when_none_shown() -> None:
+    assert image_request(Game(10, 20, host=Seat(HOST), host_color=Color.BLACK, mode=Mode.IMAGE)) is None
+    game = started(Mode.TEXT)
+    game.play(HOST, parse_square("f5"))
+    assert image_request(game) is None
+
+
 @pytest.mark.parametrize("mode", list(Mode))
 @pytest.mark.parametrize("finished", [False, True])
 def test_no_replay_while_playing_or_without_moves(mode: Mode, finished: bool, tiles: Tiles) -> None:
@@ -78,7 +90,7 @@ def test_no_replay_while_playing_or_without_moves(mode: Mode, finished: bool, ti
     else:
         game.play(HOST, parse_square("f5"))
 
-    view, files = build(game, tiles)
+    view, files = render(game, tiles)
     try:
         expected_files = [] if mode is Mode.TEXT else [BOARD_FILE]
         assert [file.filename for file in files] == expected_files

@@ -29,11 +29,16 @@ class OthelloBot(discord.Client):
         self.controller = Controller(self)
 
     async def setup_hook(self) -> None:
+        self.controller.warm_up()
         self.tiles = await sync_tiles(self)
         self.add_dynamic_items(GameButton)
         self.tree.add_command(othello)
         await self.tree.sync()
         self.expire_idle.start()
+
+    async def close(self) -> None:
+        await super().close()
+        self.controller.close()
 
     async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
         self.controller.forget(payload.message_id)

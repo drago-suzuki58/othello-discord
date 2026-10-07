@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+from dataclasses import dataclass
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -112,7 +113,8 @@ def render_board(
 
 def _png(image: Image.Image) -> bytes:
     buffer = io.BytesIO()
-    image.save(buffer, format="PNG", optimize=True)
+    # optimize は時間が数倍かかるわりに、ほとんど小さくならない。
+    image.save(buffer, format="PNG")
     return buffer.getvalue()
 
 
@@ -123,12 +125,15 @@ def board_png(board: Board, **options) -> bytes:
 def replay_gif(moves: list[int], *, cell: int = 40, frame_ms: int = 600, last_frame_ms: int = 3000) -> bytes:
     """棋譜を初期局面から 1 手ずつたどる GIF を作る。"""
     boards = replay(moves)
-    frames = [
-        render_board(board, cell=cell, last_move=moves[i - 1] if i else None, show_legal=False).convert(
-            "P", palette=Image.Palette.ADAPTIVE, colors=64
-        )
+    images = [
+        render_board(board, cell=cell, last_move=moves[i - 1] if i else None, show_legal=False)
         for i, board in enumerate(boards)
     ]
+    # どの局面も使う色はほぼ同じなので、最終局面の色表を全フレームで使う。
+    # フレームごとに減色するより速く、フレーム間の差分も小さくなる。
+    # 既定の median cut は面積の小さい直前の手の印の赤を灰色に潰すので、octree を使う。
+    palette = images[-1].quantize(colors=64, method=Image.Quantize.FASTOCTREE)
+    frames = [image.quantize(palette=palette, dither=Image.Dither.NONE) for image in images]
     durations = [frame_ms] * (len(frames) - 1) + [last_frame_ms]
     buffer = io.BytesIO()
     frames[0].save(
@@ -141,6 +146,35 @@ def replay_gif(moves: list[int], *, cell: int = 40, frame_ms: int = 600, last_fr
         optimize=True,
     )
     return buffer.getvalue()
+
+
+@dataclass(frozen=True)
+class ImageRequest:
+    """対局メッセージに添付する画像の指定。別プロセスに渡すため、値だけを持つ。"""
+
+    board: Board | None = None  # 盤面 PNG を描く局面
+    last_move: int | None = None
+    show_legal: bool = False
+    selected_col: int | None = None
+    replay: tuple[int, ...] = ()  # 空でなければリプレイ GIF を描く
+
+
+@dataclass(frozen=True)
+class Images:
+    board: bytes | None = None
+    replay: bytes | None = None
+
+
+def render_images(request: ImageRequest) -> Images:
+    board = None
+    if request.board is not None:
+        board = board_png(
+            request.board,
+            last_move=request.last_move,
+            show_legal=request.show_legal,
+            selected_col=request.selected_col,
+        )
+    return Images(board, replay_gif(list(request.replay)) if request.replay else None)
 
 
 # --- 文字モード用タイル ---------------------------------------------------------

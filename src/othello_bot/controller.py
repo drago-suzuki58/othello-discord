@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import multiprocessing
 import time
 import unicodedata
+from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING
 
 import discord
@@ -14,7 +16,8 @@ from discord import app_commands
 from othello_bot.ai import Level, choose_move
 from othello_bot.engine import Color, parse_square, square_name
 from othello_bot.game import Game, GameError, Mode, Phase, Registry, Seat
-from othello_bot.views import build, notice, resign_confirm
+from othello_bot.render import Images, render_images
+from othello_bot.views import build, image_request, notice, resign_confirm
 
 if TYPE_CHECKING:
     from othello_bot.bot import OthelloBot
@@ -23,6 +26,7 @@ log = logging.getLogger(__name__)
 
 IDLE_TIMEOUT = 24 * 60 * 60
 CPU_MIN_DELAY = 0.8  # CPU が一瞬で打つと何が起きたか追いにくいので、最低限待つ
+POOL_SIZE = 2
 
 
 async def _error(interaction: discord.Interaction, text: str) -> None:
@@ -37,6 +41,20 @@ class Controller:
     def __init__(self, bot: OthelloBot) -> None:
         self.bot = bot
         self.registry = Registry()
+        # CPU の探索と画像の生成は重いので、GIL を取り合ってイベントループを止めないよう別プロセスで行う。
+        # 探索の 2 秒間に描画が待たされないよう、プールを分ける。
+        context = multiprocessing.get_context("spawn")
+        self._cpu_pool = ProcessPoolExecutor(POOL_SIZE, mp_context=context)
+        self._render_pool = ProcessPoolExecutor(POOL_SIZE, mp_context=context)
+
+    def warm_up(self) -> None:
+        """最初の操作でプロセスの起動を待たないよう、先に起動しておく。"""
+        for pool in (self._cpu_pool, self._render_pool):
+            pool.submit(int)
+
+    def close(self) -> None:
+        for pool in (self._cpu_pool, self._render_pool):
+            pool.shutdown(wait=False, cancel_futures=True)
 
     # --- 対局の開始 ---
 
@@ -74,7 +92,7 @@ class Controller:
         # 送信を待つ間に同じ人がもう一度コマンドを実行しても弾けるよう、先に登録する。
         self.registry.add(game)
         try:
-            view, files = build(game, self.bot.tiles)
+            view, files = await self._build(game)
             await interaction.response.send_message(
                 view=view, files=files, allowed_mentions=mentions or discord.AllowedMentions.none()
             )
@@ -159,8 +177,14 @@ class Controller:
             return await _error(interaction, str(e))
 
         async with game.lock:
-            view, files = build(game, self.bot.tiles)
-            await interaction.response.edit_message(view=view, attachments=files)
+            if game.phase is Phase.FINISHED:
+                # リプレイ GIF の生成と送信は応答の期限（3 秒）を超えうるので、先に応答を保留する。
+                await interaction.response.defer()
+            view, files = await self._build(game)
+            if interaction.response.is_done():
+                await interaction.edit_original_response(view=view, attachments=files)
+            else:
+                await interaction.response.edit_message(view=view, attachments=files)
         self._after_update(game)
 
     async def _resign(self, interaction: discord.Interaction, message_id: int | None) -> None:
@@ -176,11 +200,22 @@ class Controller:
 
     # --- 更新 ---
 
+    async def _build(self, game: Game) -> tuple[discord.ui.LayoutView, list[discord.File]]:
+        loop = asyncio.get_running_loop()
+        while True:
+            request = image_request(game)
+            images = Images()
+            if request is not None:
+                images = await loop.run_in_executor(self._render_pool, render_images, request)
+            # 描いている間にほかの操作で状態が変わっていたら、画像と表示が食い違わないよう描き直す。
+            if image_request(game) == request:
+                return build(game, self.bot.tiles, images)
+
     async def push(self, game: Game) -> None:
         """インタラクションの応答とは別に、対局メッセージを最新の状態にする。"""
         message = self.bot.get_partial_messageable(game.channel_id).get_partial_message(game.message_id)
         async with game.lock:
-            view, files = build(game, self.bot.tiles)
+            view, files = await self._build(game)
             try:
                 await message.edit(view=view, attachments=files)
             except (discord.NotFound, discord.Forbidden):
@@ -200,7 +235,7 @@ class Controller:
             while seat := game.cpu_to_move:
                 started = time.monotonic()
                 board = game.board
-                move = await asyncio.to_thread(choose_move, board, seat.cpu)
+                move = await asyncio.get_running_loop().run_in_executor(self._cpu_pool, choose_move, board, seat.cpu)
                 await asyncio.sleep(max(0.0, CPU_MIN_DELAY - (time.monotonic() - started)))
                 # 考えている間に投了などで局面が変わっていたら打たない。
                 if game.board is not board or game.cpu_to_move is None:
