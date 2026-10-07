@@ -6,7 +6,7 @@ from othello_bot.engine import Color, parse_square, square_name
 from othello_bot.game import EndReason, Game, Mode, Phase, Seat
 from othello_bot.render import TILE_KINDS, Images, render_images
 from othello_bot.text_board import Tiles, board_text
-from othello_bot.views import BOARD_FILE, REPLAY_FILE, build, image_request
+from othello_bot.views import BOARD_FILE, REPLAY_FILE, GameButton, build, image_request
 
 HOST, GUEST = 1, 2
 
@@ -64,6 +64,8 @@ def test_finished_game_shows_replay(mode: Mode, reason: EndReason, tiles: Tiles)
         assert [[item.media.url for item in gallery.items] for gallery in galleries] == [
             [f"attachment://{name}"] for name in expected_files
         ]
+        buttons = [item.item.custom_id for item in view.walk_children() if isinstance(item, GameButton)]
+        assert buttons == ["oth:rematch_swap:", "oth:rematch_same:"]
         gif = Image.open(files[-1].fp)
         assert gif.format == "GIF"
         assert gif.n_frames == len(game.moves) + 1

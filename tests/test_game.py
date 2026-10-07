@@ -111,3 +111,35 @@ def test_registry_limits_by_channel_and_user() -> None:
     assert registry.by_message(99) is game
     game.cancel(HOST)
     assert registry.active_for(20, HOST) is None
+
+
+@pytest.mark.parametrize("swap", [True, False])
+def test_rematch_between_players(swap: bool) -> None:
+    game = started()
+    with pytest.raises(GameError, match="終局"):
+        game.rematch(GUEST, swap=swap)
+    game.resign(HOST)
+    with pytest.raises(GameError, match="対局者"):
+        game.rematch(OTHER, swap=swap)
+
+    # 白だった GUEST が申し込み、HOST の承諾を待つ。
+    rematch = game.rematch(GUEST, swap=swap)
+    assert rematch.phase is Phase.WAITING
+    assert rematch.invited_id == HOST
+    assert (rematch.channel_id, rematch.mode) == (game.channel_id, game.mode)
+    rematch.accept(HOST)
+    expected = Color.BLACK if swap else Color.WHITE
+    assert rematch.color_of(GUEST) is expected
+    assert rematch.color_of(HOST) is expected.opponent
+    assert rematch.moves == []
+
+
+@pytest.mark.parametrize("swap", [True, False])
+def test_rematch_against_cpu_starts_immediately(swap: bool) -> None:
+    game = Game.against_cpu(10, 20, HOST, Color.WHITE, Level.STRONG, Mode.TEXT)
+    game.abort()
+    rematch = game.rematch(HOST, swap=swap)
+    assert rematch.phase is Phase.PLAYING
+    assert rematch.color_of(HOST) is (Color.BLACK if swap else Color.WHITE)
+    assert rematch.guest.cpu is Level.STRONG
+    assert rematch.mode is Mode.TEXT

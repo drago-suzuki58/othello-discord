@@ -81,8 +81,6 @@ class Controller:
                 )
             if opponent.id == user.id:
                 return await _error(interaction, "自分自身には申し込めません。")
-            if busy := self.registry.active_for(interaction.channel_id, opponent.id):
-                return await _error(interaction, f"{opponent.mention} はこのチャンネルで対局中です: {_jump_url(busy)}")
         game = Game(
             interaction.guild_id,
             interaction.channel_id,
@@ -91,24 +89,39 @@ class Controller:
             mode=mode,
             invited_id=opponent.id if opponent else None,
         )
-        mentions = discord.AllowedMentions(users=[opponent]) if opponent else None
-        await self._start(interaction, game, mentions)
+        await self._start(interaction, game)
 
     async def start_vs_cpu(self, interaction: discord.Interaction, level: Level, color: Color, mode: Mode):
         game = Game.against_cpu(interaction.guild_id, interaction.channel_id, interaction.user.id, color, level, mode)
         await self._start(interaction, game)
 
-    async def _start(
-        self, interaction: discord.Interaction, game: Game, mentions: discord.AllowedMentions | None = None
-    ) -> None:
+    async def rematch(self, interaction: discord.Interaction, swap: bool) -> None:
+        finished = self.store.get(interaction.message.id)
+        if finished is None:
+            return await _error(interaction, "この対局の記録が残っていないため、再戦できません。")
+        try:
+            game = finished.rematch(interaction.user.id, swap=swap)
+        except GameError as e:
+            return await _error(interaction, str(e))
+        await self._start(interaction, game)
+
+    async def _start(self, interaction: discord.Interaction, game: Game) -> None:
         if busy := self.registry.active_for(game.channel_id, game.host.user_id):
             return await _error(interaction, f"このチャンネルで参加中の対局があります: {_jump_url(busy)}")
+        invited = game.invited_id
+        if invited is not None and (busy := self.registry.active_for(game.channel_id, invited)):
+            return await _error(interaction, f"<@{invited}> はこのチャンネルで対局中です: {_jump_url(busy)}")
         # 送信を待つ間に同じ人がもう一度コマンドを実行しても弾けるよう、先に登録する。
         self.registry.add(game)
         try:
             view, files = await self._build(game)
             await interaction.response.send_message(
-                view=view, files=files, allowed_mentions=mentions or discord.AllowedMentions.none()
+                view=view,
+                files=files,
+                # 申し込まれた人にだけ通知する。
+                allowed_mentions=discord.AllowedMentions(users=[discord.Object(invited)])
+                if invited is not None
+                else discord.AllowedMentions.none(),
             )
             message = await interaction.original_response()
         except BaseException:
@@ -157,6 +170,8 @@ class Controller:
     async def on_button(self, interaction: discord.Interaction, action: str, arg: int | None) -> None:
         if action == "resign_yes":
             return await self._resign(interaction, arg)
+        if action in ("rematch_swap", "rematch_same"):
+            return await self.rematch(interaction, swap=action == "rematch_swap")
 
         game = self.registry.by_message(interaction.message.id)
         if game is None:

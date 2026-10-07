@@ -247,6 +247,28 @@ class Game:
         elif self.phase is Phase.WAITING:
             self._close(EndReason.ABORTED)
 
+    # --- 再戦 ---
+
+    def rematch(self, user_id: int, *, swap: bool) -> Game:
+        """終局した対局と同じ相手・表示で次の対局を作る。対人戦では相手の承諾待ちになる。"""
+        if self.phase is not Phase.FINISHED:
+            raise GameError("終局した対局でだけ再戦できます。")
+        color = self.color_of(user_id)
+        if color is None:
+            raise GameError("この対局の対局者だけが再戦を申し込めます。")
+        opponent = self.seat(color.opponent)
+        new_color = color.opponent if swap else color
+        if opponent.is_cpu:
+            return Game.against_cpu(self.guild_id, self.channel_id, user_id, new_color, opponent.cpu, self.mode)
+        return Game(
+            self.guild_id,
+            self.channel_id,
+            host=Seat(user_id),
+            host_color=new_color,
+            mode=self.mode,
+            invited_id=opponent.user_id,
+        )
+
     def _finish(self, reason: EndReason) -> None:
         self.phase = Phase.FINISHED
         self.end_reason = reason

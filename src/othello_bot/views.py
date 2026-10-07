@@ -171,7 +171,7 @@ def _waiting_items(game: Game) -> list[ui.Item]:
         )
     mode = "画像" if game.mode is Mode.IMAGE else "文字"
     return [
-        ui.TextDisplay(f"{text}\n-# 申し込んだ人が先手（黒）です。表示: {mode}"),
+        ui.TextDisplay(f"{text}\n-# 表示: {mode}"),
         ui.Separator(),
         buttons,
     ]
@@ -243,6 +243,11 @@ def build(game: Game, tiles: Tiles, images: Images) -> tuple[ui.LayoutView, list
                 ui.TextDisplay(_result(game)),
                 *board,
                 ui.TextDisplay(_kifu(game)),
+                ui.Separator(),
+                _row(
+                    GameButton("rematch_swap", label="色を入れ替えて再戦", style=discord.ButtonStyle.primary),
+                    GameButton("rematch_same", label="同じ色で再戦"),
+                ),
             ]
 
     view = ui.LayoutView(timeout=None)
@@ -275,6 +280,7 @@ HELP_TEXT = """\
 `/othello cpu` CPU と対局します。強さ（弱い・普通・強い）と手番を選べます。
 コマンドを実行した人が先手（黒）です。CPU 戦では後手（白）も選べます。
 `display` で盤面の表示を「画像」か「文字」から選べます。
+終局したメッセージの再戦ボタンで、同じ相手ともう一度対局できます。色を入れ替えるか、同じ色のままかを選べます。対人戦では相手の承諾を待ちます。
 
 **石を打つ**
 盤面の下の列ボタン（a〜h）を押してから、行ボタン（1〜8）を押します。打てない列・行のボタンは押せません。

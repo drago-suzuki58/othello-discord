@@ -65,6 +65,9 @@ def test_store_loads_only_active_games(tmp_path) -> None:
     game.resign(GUEST)
     store.save(game)
     assert [g.message_id for g in store.active_games()] == [cpu.message_id]
+    # 終局した対局も再戦のために引ける。
+    assert store.get(game.message_id).to_dict() == game.to_dict()
+    assert store.get(999) is None
     store.delete(cpu.message_id)
     assert store.active_games() == []
     store.close()

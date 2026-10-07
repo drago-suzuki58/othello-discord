@@ -25,6 +25,10 @@ class Store:
             (game.message_id, game.is_active, json.dumps(game.to_dict())),
         )
 
+    def get(self, message_id: int) -> Game | None:
+        row = self._db.execute("SELECT data FROM games WHERE message_id = ?", (message_id,)).fetchone()
+        return Game.from_dict(json.loads(row[0])) if row else None
+
     def delete(self, message_id: int) -> None:
         self._db.execute("DELETE FROM games WHERE message_id = ?", (message_id,))
 
