@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 
 from othello_bot.ai import Level
-from othello_bot.engine import Board, Color, iter_squares
+from othello_bot.engine import Board, Color, iter_squares, replay
 
 
 class GameError(Exception):
@@ -70,7 +70,7 @@ class Game:
     passed: Color | None = None  # 直前の手のあとでパスになった側
     end_reason: EndReason | None = None
     resigned: Color | None = None
-    updated_at: float = field(default_factory=time.monotonic)
+    updated_at: float = field(default_factory=time.time)  # 再起動をまたいで比べるので実時刻
     # 状態の変更からメッセージの更新までを直列にする。
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     cpu_task: asyncio.Task | None = None
@@ -260,7 +260,66 @@ class Game:
         self._touch()
 
     def _touch(self) -> None:
-        self.updated_at = time.monotonic()
+        self.updated_at = time.time()
+
+    # --- 保存 ---
+
+    def to_dict(self) -> dict:
+        """保存用の値。列の選択途中の状態は保存しない。"""
+        return {
+            "guild_id": self.guild_id,
+            "channel_id": self.channel_id,
+            "message_id": self.message_id,
+            "host": _seat_to_dict(self.host),
+            "host_color": self.host_color.name,
+            "mode": self.mode.name,
+            "invited_id": self.invited_id,
+            "guest": _seat_to_dict(self.guest) if self.guest else None,
+            "phase": self.phase.name,
+            "moves": self.moves,
+            "draw_offer": _name(self.draw_offer),
+            "passed": _name(self.passed),
+            "end_reason": _name(self.end_reason),
+            "resigned": _name(self.resigned),
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Game:
+        return cls(
+            data["guild_id"],
+            data["channel_id"],
+            host=_seat_from_dict(data["host"]),
+            host_color=Color[data["host_color"]],
+            mode=Mode[data["mode"]],
+            invited_id=data["invited_id"],
+            guest=_seat_from_dict(data["guest"]) if data["guest"] else None,
+            message_id=data["message_id"],
+            phase=Phase[data["phase"]],
+            board=replay(data["moves"])[-1],
+            moves=list(data["moves"]),
+            draw_offer=_member(Color, data["draw_offer"]),
+            passed=_member(Color, data["passed"]),
+            end_reason=_member(EndReason, data["end_reason"]),
+            resigned=_member(Color, data["resigned"]),
+            updated_at=data["updated_at"],
+        )
+
+
+def _name(member: Enum | None) -> str | None:
+    return None if member is None else member.name
+
+
+def _member[E: Enum](enum: type[E], name: str | None) -> E | None:
+    return None if name is None else enum[name]
+
+
+def _seat_to_dict(seat: Seat) -> dict:
+    return {"user_id": seat.user_id, "cpu": _name(seat.cpu)}
+
+
+def _seat_from_dict(data: dict) -> Seat:
+    return Seat(data["user_id"], _member(Level, data["cpu"]))
 
 
 class Registry:

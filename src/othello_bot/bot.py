@@ -13,6 +13,7 @@ from othello_bot.ai import Level
 from othello_bot.controller import Controller
 from othello_bot.engine import Color
 from othello_bot.game import Mode
+from othello_bot.store import Store
 from othello_bot.text_board import Tiles, sync_tiles
 from othello_bot.views import HELP_TEXT, GameButton, notice
 
@@ -20,13 +21,13 @@ from othello_bot.views import HELP_TEXT, GameButton, notice
 class OthelloBot(discord.Client):
     tiles: Tiles
 
-    def __init__(self) -> None:
+    def __init__(self, db_path: str) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
         intents.guild_messages = True  # 対局メッセージの削除を検知する
         super().__init__(intents=intents, allowed_mentions=discord.AllowedMentions.none(), max_messages=None)
         self.tree = app_commands.CommandTree(self)
-        self.controller = Controller(self)
+        self.controller = Controller(self, Store(db_path))
 
     async def setup_hook(self) -> None:
         self.controller.warm_up()
@@ -34,6 +35,7 @@ class OthelloBot(discord.Client):
         self.add_dynamic_items(GameButton)
         self.tree.add_command(othello)
         await self.tree.sync()
+        await self.controller.resume()
         self.expire_idle.start()
 
     async def close(self) -> None:
@@ -125,4 +127,4 @@ def main() -> None:
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
         sys.exit("環境変数 DISCORD_TOKEN に Bot のトークンを設定してください。")
-    OthelloBot().run(token)
+    OthelloBot(os.environ.get("OTHELLO_DB", "othello.db")).run(token)

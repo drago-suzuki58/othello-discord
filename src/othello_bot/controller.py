@@ -17,6 +17,7 @@ from othello_bot.ai import Level, choose_move
 from othello_bot.engine import Color, parse_square, square_name
 from othello_bot.game import Game, GameError, Mode, Phase, Registry, Seat
 from othello_bot.render import Images, render_images
+from othello_bot.store import Store
 from othello_bot.views import build, image_request, notice, resign_confirm
 
 if TYPE_CHECKING:
@@ -38,9 +39,10 @@ def _jump_url(game: Game) -> str:
 
 
 class Controller:
-    def __init__(self, bot: OthelloBot) -> None:
+    def __init__(self, bot: OthelloBot, store: Store) -> None:
         self.bot = bot
-        self.registry = Registry()
+        self.registry = Registry()  # 進行中の対局。終局したものも含めてすべて store に保存する。
+        self.store = store
         # CPU の探索と画像の生成は重いので、GIL を取り合ってイベントループを止めないよう別プロセスで行う。
         # 探索の 2 秒間に描画が待たされないよう、プールを分ける。
         context = multiprocessing.get_context("spawn")
@@ -55,6 +57,18 @@ class Controller:
     def close(self) -> None:
         for pool in (self._cpu_pool, self._render_pool):
             pool.shutdown(wait=False, cancel_futures=True)
+        self.store.close()
+
+    async def resume(self) -> None:
+        """保存してある進行中の対局を読み込み、メッセージを今の状態で描き直す。CPU の手番なら続きを打つ。"""
+        games = self.store.active_games()
+        for game in games:
+            self.registry.add(game)
+        for game in games:
+            try:
+                await self.push(game)
+            except discord.HTTPException:
+                log.exception("failed to redraw resumed game %s", game.message_id)
 
     # --- 対局の開始 ---
 
@@ -101,6 +115,7 @@ class Controller:
             self.registry.remove(game)
             raise
         game.message_id = message.id
+        self.store.save(game)
         self._after_update(game)
 
     # --- 着手コマンド ---
@@ -145,9 +160,7 @@ class Controller:
 
         game = self.registry.by_message(interaction.message.id)
         if game is None:
-            return await _error(
-                interaction, "この対局は終了しています。Bot の再起動などで対局の情報が失われた可能性があります。"
-            )
+            return await _error(interaction, "この対局は終了しています。")
         user_id = interaction.user.id
         try:
             match action:
@@ -177,6 +190,7 @@ class Controller:
             return await _error(interaction, str(e))
 
         async with game.lock:
+            self.store.save(game)
             if game.phase is Phase.FINISHED:
                 # リプレイ GIF の生成と送信は応答の期限（3 秒）を超えうるので、先に応答を保留する。
                 await interaction.response.defer()
@@ -215,12 +229,13 @@ class Controller:
         """インタラクションの応答とは別に、対局メッセージを最新の状態にする。"""
         message = self.bot.get_partial_messageable(game.channel_id).get_partial_message(game.message_id)
         async with game.lock:
+            self.store.save(game)
             view, files = await self._build(game)
             try:
                 await message.edit(view=view, attachments=files)
             except (discord.NotFound, discord.Forbidden):
                 log.warning("game message %s is no longer editable; dropping the game", game.message_id)
-                self.registry.remove(game)
+                self.forget(game.message_id)
                 return
         self._after_update(game)
 
@@ -246,11 +261,13 @@ class Controller:
             log.exception("CPU turn failed in game %s", game.message_id)
 
     def forget(self, message_id: int) -> None:
+        """対局メッセージが消えた対局を、進行中かどうかにかかわらず忘れる。"""
         if game := self.registry.by_message(message_id):
             self.registry.remove(game)
+        self.store.delete(message_id)
 
     async def expire_idle(self) -> None:
-        for game in self.registry.idle_since(time.monotonic() - IDLE_TIMEOUT):
+        for game in self.registry.idle_since(time.time() - IDLE_TIMEOUT):
             game.abort()
             try:
                 await self.push(game)

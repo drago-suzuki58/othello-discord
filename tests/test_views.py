@@ -2,8 +2,8 @@ import pytest
 from discord import ui
 from PIL import Image
 
-from othello_bot.engine import Color, parse_square
-from othello_bot.game import EndReason, Game, Mode, Seat
+from othello_bot.engine import Color, parse_square, square_name
+from othello_bot.game import EndReason, Game, Mode, Phase, Seat
 from othello_bot.render import TILE_KINDS, Images, render_images
 from othello_bot.text_board import Tiles, board_text
 from othello_bot.views import BOARD_FILE, REPLAY_FILE, build, image_request
@@ -72,6 +72,26 @@ def test_finished_game_shows_replay(mode: Mode, reason: EndReason, tiles: Tiles)
     finally:
         for file in files:
             file.close()
+
+
+@pytest.mark.parametrize("mode", list(Mode))
+def test_kifu_shown_while_playing(mode: Mode, tiles: Tiles) -> None:
+    # 終局の 1 手前、棋譜が最も長くなる状態で上限に収まることも確かめる。
+    full = started(mode)
+    while full.phase is Phase.PLAYING:
+        full.play(HOST if full.board.turn is Color.BLACK else GUEST, full.board.legal_moves()[0])
+    game = started(mode)
+    for move in full.moves[:-1]:
+        game.play(HOST if game.board.turn is Color.BLACK else GUEST, move)
+    assert game.phase is Phase.PLAYING
+    view, files = render(game, tiles)
+    for file in files:
+        file.close()
+    kifu = "".join(square_name(m) for m in game.moves)
+    texts = [item.content for item in view.walk_children() if isinstance(item, ui.TextDisplay)]
+    assert f"-# 棋譜（{len(game.moves)} 手）: `{kifu}`" in texts
+    assert len(list(view.walk_children())) <= 40
+    assert sum(len(text) for text in texts) <= 4000
 
 
 def test_no_images_requested_when_none_shown() -> None:

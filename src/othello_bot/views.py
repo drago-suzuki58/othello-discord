@@ -117,7 +117,8 @@ def _result(game: Game) -> str:
 def _kifu(game: Game) -> str:
     if not game.moves:
         return "-# 棋譜: なし"
-    return f"-# 棋譜（{len(game.moves)} 手）\n```\n{' '.join(square_name(m) for m in game.moves)}\n```"
+    # ほかのオセロのツールにそのまま貼れるよう、一般的な続け書きの形式にする。
+    return f"-# 棋譜（{len(game.moves)} 手）: `{''.join(square_name(m) for m in game.moves)}`"
 
 
 def _board_options(game: Game) -> dict:
@@ -230,6 +231,7 @@ def build(game: Game, tiles: Tiles, images: Images) -> tuple[ui.LayoutView, list
                 ui.TextDisplay(f"### オセロ\n{_players(game, tiles)}"),
                 ui.TextDisplay(_status(game)),
                 *board,
+                ui.TextDisplay(_kifu(game)),
                 ui.Separator(),
                 *_move_buttons(game),
                 _game_buttons(game),
