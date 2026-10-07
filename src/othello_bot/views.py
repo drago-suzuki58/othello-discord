@@ -123,15 +123,20 @@ def _kifu(game: Game) -> str:
 def _board_items(game: Game, tiles: Tiles, *, final: bool) -> tuple[list[ui.Item], list[discord.File]]:
     show_legal = game.phase is Phase.PLAYING and game.cpu_to_move is None
     options = {"last_move": game.last_move, "show_legal": show_legal, "selected_col": game.selected_col}
+    items: list[ui.Item] = []
+    files: list[discord.File] = []
     if game.mode is Mode.TEXT:
-        return [ui.TextDisplay(board_text(game.board, tiles, **options))], []
-
-    files = [discord.File(io.BytesIO(board_png(game.board, **options)), filename=BOARD_FILE)]
-    gallery = [discord.MediaGalleryItem(f"attachment://{BOARD_FILE}", description="盤面")]
+        items.append(ui.TextDisplay(board_text(game.board, tiles, **options)))
+    else:
+        files.append(discord.File(io.BytesIO(board_png(game.board, **options)), filename=BOARD_FILE))
+        items.append(ui.MediaGallery(discord.MediaGalleryItem(f"attachment://{BOARD_FILE}", description="盤面")))
     if final and game.moves:
         files.append(discord.File(io.BytesIO(replay_gif(game.moves)), filename=REPLAY_FILE))
-        gallery.append(discord.MediaGalleryItem(f"attachment://{REPLAY_FILE}", description="リプレイ"))
-    return [ui.MediaGallery(*gallery)], files
+        items += [
+            ui.TextDisplay("### リプレイ"),
+            ui.MediaGallery(discord.MediaGalleryItem(f"attachment://{REPLAY_FILE}", description="リプレイ")),
+        ]
+    return items, files
 
 
 def _waiting_items(game: Game) -> list[ui.Item]:
