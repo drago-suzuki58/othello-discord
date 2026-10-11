@@ -106,6 +106,22 @@ class Controller:
         await self._start(interaction, game)
 
     async def _start(self, interaction: discord.Interaction, game: Game) -> None:
+        # インタラクションへの応答は権限がなくても届くが、CPU の手などで Bot としてメッセージを編集するときに拒否される。
+        # 添付ファイルがなくても、編集で attachments を指定するとファイルを添付する権限を求められる。
+        permissions = interaction.app_permissions
+        missing = [
+            name
+            for name, granted in (
+                ("チャンネルを見る", permissions.view_channel),
+                ("ファイルを添付", permissions.attach_files),
+            )
+            if not granted
+        ]
+        if missing:
+            return await _error(
+                interaction,
+                f"Bot にこのチャンネルの権限が足りないため、対局できません。不足している権限: {'、'.join(missing)}",
+            )
         if busy := self.registry.active_for(game.channel_id, game.host.user_id):
             return await _error(interaction, f"このチャンネルで参加中の対局があります: {_jump_url(busy)}")
         invited = game.invited_id
@@ -248,10 +264,15 @@ class Controller:
             view, files = await self._build(game)
             try:
                 await message.edit(view=view, attachments=files)
-            except (discord.NotFound, discord.Forbidden):
-                log.warning("game message %s is no longer editable; dropping the game", game.message_id)
+            except discord.NotFound:
+                log.warning("game message %s was deleted; dropping the game", game.message_id)
                 self.forget(game.message_id)
                 return
+            except discord.Forbidden as e:
+                # 権限を直せば続けられるよう、対局は残す。
+                log.warning(
+                    "missing permissions to edit game message %s: %s (code %s)", game.message_id, e.text, e.code
+                )
         self._after_update(game)
 
     def _after_update(self, game: Game) -> None:

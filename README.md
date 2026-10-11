@@ -37,7 +37,7 @@ Discord のチャンネルでオセロを遊べる Bot です。1 局につき�
 必要なもの: [uv](https://docs.astral.sh/uv/)、Discord の Bot アプリケーション
 
 1. [Discord Developer Portal](https://discord.com/developers/applications) でアプリケーションを作り、Bot のトークンを発行します。特権インテントは不要です。
-2. OAuth2 の URL Generator で、スコープ `bot` と `applications.commands`、権限「チャンネルを見る」「メッセージを送信」を選び、生成した URL から Bot をサーバーに招待します。
+2. OAuth2 の URL Generator で、スコープ `bot` と `applications.commands`、権限「チャンネルを見る」「メッセージを送信」「ファイルを添付」を選び、生成した URL から Bot をサーバーに招待します。プライベートチャンネルで遊ぶときは、Bot（または Bot のロール）にもそのチャンネルの「チャンネルを見る」と「ファイルを添付」を許可してください。権限が足りないチャンネルでは対局を始められません。
 3. このリポジトリで依存関係を入れ、トークンを設定して起動します。
 
 ```sh
